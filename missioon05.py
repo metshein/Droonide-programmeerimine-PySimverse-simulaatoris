@@ -1,7 +1,6 @@
 from pysimverse import Drone
 import cv2
 import mediapipe as mp
-import time
 
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -15,20 +14,24 @@ POSE_CONNECTIONS = [(11, 12), (11, 13), (13, 15), (12, 14), (14, 16), (11, 23), 
 
 drone = Drone()
 
-drone.connect()
-drone.take_off()
-
 camera = cv2.VideoCapture(0)
 
 options = PoseLandmarkerOptions(base_options=BaseOptions(model_asset_path="pose_landmarker_lite.task"), running_mode=VisionRunningMode.VIDEO, num_poses=1)
 
 landmarker = PoseLandmarker.create_from_options(options)
 
+drone.connect()
+drone.take_off()
+
 timestamp_ms = 0
 
 base_hip_y = None
 jump_count = 0
-last_jump_time = 0
+jump_active = False
+
+up_frames = 0
+pause_frames = 0
+down_frames = 0
 
 while True:
 
@@ -74,18 +77,22 @@ while True:
         if base_hip_y is None:
             base_hip_y = hip_y
 
-        current_time = time.time()
-
         jump_detected = hip_y < base_hip_y - 0.05
 
-        if jump_detected and current_time - last_jump_time > 1:
+        if jump_detected and not jump_active:
 
             jump_count += 1
-            last_jump_time = current_time
+            jump_active = True
 
-            print("HÜPE")
+            print(f"HÜPE {jump_count}")
 
-            drone.move_forward(0.5)
+            up_frames = 15
+            pause_frames = 10
+            down_frames = 15
+
+        elif not jump_detected:
+
+            jump_active = False
 
         cv2.putText(frame, f"HIP: {hip_y:.3f}", (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
         cv2.putText(frame, f"BASE: {base_hip_y:.3f}", (50, 90), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
@@ -96,12 +103,32 @@ while True:
         else:
             cv2.putText(frame, "NO JUMP", (50, 180), cv2.FONT_HERSHEY_SIMPLEX, 2, (0, 0, 255), 3)
 
+    if up_frames > 0:
+
+        drone.send_rc_control(0, 0, 50, 0)
+        up_frames -= 1
+
+    elif pause_frames > 0:
+
+        drone.send_rc_control(0, 0, 0, 0)
+        pause_frames -= 1
+
+    elif down_frames > 0:
+
+        drone.send_rc_control(0, 0, -30, 0)
+        down_frames -= 1
+
+    else:
+
+        drone.send_rc_control(0, 0, 0, 0)
+
     cv2.imshow("Body Follower", frame)
 
     if cv2.waitKey(1) & 0xFF == 27:
         break
 
+drone.send_rc_control(0, 0, 0, 0)
+drone.land()
+
 camera.release()
 cv2.destroyAllWindows()
-
-drone.land()
